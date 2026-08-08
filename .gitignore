@@ -1,0 +1,25 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local model / vendor installs
+third_party/
+pretrained_models/
+models/
+*.pt
+*.onnx
+*.wav
+!assets/.gitkeep
+
+# Runtime artifacts
+outputs/
+tmp/
+.cache/
+*.log
+.DS_Store

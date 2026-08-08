@@ -1,0 +1,35 @@
+# Lean CosyVoice2 inference deps (skip training / TensorRT / DeepSpeed)
+# Install after cloning CosyVoice into third_party/CosyVoice
+# Prefer a CUDA 12.x PyTorch build that matches your driver.
+
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+torch==2.3.1
+torchaudio==2.3.1
+numpy==1.26.4
+HyperPyYAML==1.2.3
+modelscope==1.20.0
+huggingface_hub>=0.23.0
+transformers==4.51.3
+diffusers==0.29.0
+librosa==0.10.2
+soundfile==0.12.1
+onnxruntime-gpu==1.18.0; sys_platform == 'linux'
+onnxruntime==1.18.0; sys_platform == 'darwin' or sys_platform == 'win32'
+conformer==0.3.2
+networkx==3.1
+omegaconf==2.3.0
+inflect==7.3.1
+wetext==0.0.4
+wget==3.2
+gdown==5.1.0
+pyarrow==18.1.0
+protobuf==4.25
+x-transformers==2.11.24
+openai-whisper==20231117
+rich==13.7.1
+tqdm>=4.66.0
+einops>=0.7.0
+pyworld==0.3.4
+lightning==2.2.4
+matplotlib==3.7.5
