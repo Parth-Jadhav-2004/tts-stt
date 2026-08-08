@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Voice Assistant · tts-stt</title>
+<style>
+  :root {
+    --bg:#0f172a; --panel:#1e293b; --panel-2:#273449; --accent:#6366f1;
+    --accent-2:#22d3ee; --text:#e2e8f0; --muted:#94a3b8; --ok:#34d399;
+    --border:#334155; --user:#3730a3; --bot:#155e63;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    background:radial-gradient(1200px 600px at 10% -10%, #1e293b, var(--bg));
+    color:var(--text); min-height:100vh; display:flex; flex-direction:column;
+    align-items:center; padding:28px 16px;
+  }
+  header { width:100%; max-width:760px; margin-bottom:16px; }
+  h1 { margin:0; font-size:26px; letter-spacing:-.5px; }
+  h1 span { background:linear-gradient(90deg,var(--accent),var(--accent-2));
+    -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .sub { color:var(--muted); margin-top:6px; font-size:13px; }
+  .sub a { color:var(--accent-2); }
+  .app { width:100%; max-width:760px; display:flex; flex-direction:column; gap:16px; }
+  #conversation {
+    background:var(--panel); border:1px solid var(--border); border-radius:16px;
+    padding:18px; min-height:220px; max-height:44vh; overflow-y:auto;
+    display:flex; flex-direction:column; gap:12px;
+  }
+  #conversation:empty::before {
+    content:"Your conversation will appear here. Click the mic and start talking…";
+    color:var(--muted); font-size:14px;
+  }
+  .bubble { padding:10px 14px; border-radius:14px; max-width:80%; font-size:15px;
+    line-height:1.45; white-space:pre-wrap; }
+  .bubble.user { align-self:flex-end; background:var(--user); border-bottom-right-radius:4px; }
+  .bubble.bot  { align-self:flex-start; background:var(--bot); border-bottom-left-radius:4px; }
+  .bubble .who { display:block; font-size:11px; opacity:.7; margin-bottom:3px; }
+  .live {
+    background:var(--panel); border:1px dashed var(--border); border-radius:14px;
+    padding:14px 16px; font-size:17px; min-height:56px; color:var(--text);
+  }
+  .live .placeholder { color:var(--muted); }
+  .live .partial { color:var(--accent-2); }
+  .controls { display:flex; gap:10px; align-items:center; }
+  .mic {
+    width:58px; height:58px; border-radius:50%; border:none; cursor:pointer; flex:0 0 auto;
+    background:linear-gradient(90deg,var(--accent),#818cf8); color:#fff; font-size:22px;
+    display:flex; align-items:center; justify-content:center; transition:transform .05s;
+  }
+  .mic:active { transform:translateY(1px); }
+  .mic.recording { background:linear-gradient(90deg,#ef4444,#f97316);
+    animation:pulse 1.3s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(239,68,68,.5);}
+    70%{box-shadow:0 0 0 14px rgba(239,68,68,0);} 100%{box-shadow:0 0 0 0 rgba(239,68,68,0);} }
+  input[type=text] {
+    flex:1; background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    border-radius:12px; padding:14px 14px; font-size:15px;
+  }
+  button.send {
+    border:none; border-radius:12px; padding:14px 20px; font-size:15px; font-weight:600;
+    color:#fff; cursor:pointer; background:linear-gradient(90deg,var(--accent),#818cf8);
+  }
+  button.send:disabled { opacity:.5; cursor:not-allowed; }
+  .status { font-size:13px; color:var(--muted); min-height:18px; }
+  .status.ok { color:var(--ok); }
+  .status.busy { color:var(--accent-2); }
+  audio { display:none; }
+</style>
+</head>
+<body>
+  <header>
+    <h1><span>Voice Assistant</span></h1>
+    <div class="sub">
+      Speak → live transcript → press <b>Enter</b> → the assistant replies out loud.
+      &nbsp;·&nbsp; <a href="/tools">TTS/STT tools</a> &nbsp;·&nbsp; <a href="/api/health">status</a>
+    </div>
+  </header>
+
+  <div class="app">
+    <div id="conversation"></div>
+
+    <div class="live" id="live"><span class="placeholder">Press the mic and start speaking… your words show up here in real time.</span></div>
+
+    <div class="controls">
+      <button class="mic" id="mic" title="Start / stop listening">🎙</button>
+      <input type="text" id="textInput" placeholder="…or type a message and press Enter" autocomplete="off" />
+      <button class="send" id="send">Send</button>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <audio id="player"></audio>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let ws = null, audioCtx = null, processor = null, source = null, micStream = null;
+let recording = false;
+let finalizedText = "";
+let partialText = "";
+let busy = false;
+
+function fullText() { return (finalizedText + " " + partialText).trim(); }
+
+function renderLive() {
+  const live = $("live");
+  const ft = fullText();
+  if (!ft && !recording) {
+    live.innerHTML = '<span class="placeholder">Press the mic and start speaking… your words show up here in real time.</span>';
+    return;
+  }
+  live.innerHTML = escapeHtml(finalizedText) +
+    (partialText ? ' <span class="partial">' + escapeHtml(partialText) + '</span>' : '') ||
+    '<span class="placeholder">listening…</span>';
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
+
+function setStatus(msg, cls) { const el=$("status"); el.textContent=msg||""; el.className="status "+(cls||""); }
+
+function addBubble(who, text) {
+  const div = document.createElement("div");
+  div.className = "bubble " + (who === "You" ? "user" : "bot");
+  div.innerHTML = '<span class="who">' + who + '</span>' + escapeHtml(text);
+  $("conversation").appendChild(div);
+  $("conversation").scrollTop = $("conversation").scrollHeight;
+  return div;
+}
+
+// ---------- realtime mic streaming ----------
+async function startListening() {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) { setStatus("Mic error: " + e.message); return; }
+
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/stt");
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = (ev) => {
+    const data = JSON.parse(ev.data);
+    if (data.partial !== undefined) partialText = data.partial;
+    if (data.final) {
+      if (data.final.trim()) finalizedText = (finalizedText + " " + data.final).trim();
+      partialText = "";
+    }
+    renderLive();
+  };
+  await new Promise((res) => { ws.onopen = res; });
+
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  source = audioCtx.createMediaStreamSource(micStream);
+  processor = audioCtx.createScriptProcessor(4096, 1, 1);
+  source.connect(processor);
+  processor.connect(audioCtx.destination);
+  processor.onaudioprocess = (e) => {
+    if (!ws || ws.readyState !== 1) return;
+    const input = e.inputBuffer.getChannelData(0);
+    const pcm = floatTo16kPCM(input, audioCtx.sampleRate);
+    ws.send(pcm.buffer);
+  };
+
+  recording = true;
+  $("mic").classList.add("recording");
+  setStatus("Listening… speak now, then press Enter.", "busy");
+  renderLive();
+}
+
+function stopListening() {
+  recording = false;
+  $("mic").classList.remove("recording");
+  try { if (processor) { processor.disconnect(); processor.onaudioprocess = null; } } catch {}
+  try { if (source) source.disconnect(); } catch {}
+  try { if (audioCtx) audioCtx.close(); } catch {}
+  try { if (micStream) micStream.getTracks().forEach(t => t.stop()); } catch {}
+  try { if (ws && ws.readyState === 1) ws.close(); } catch {}
+  processor = source = audioCtx = micStream = ws = null;
+}
+
+function floatTo16kPCM(input, inRate) {
+  const outRate = 16000;
+  const ratio = inRate / outRate;
+  const outLen = Math.floor(input.length / ratio);
+  const out = new Int16Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const s = Math.max(-1, Math.min(1, input[Math.floor(i * ratio)]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+}
+
+$("mic").addEventListener("click", () => { recording ? stopListening() : startListening(); });
+
+// ---------- send to LLM + speak ----------
+async function submit() {
+  if (busy) return;
+  const typed = $("textInput").value.trim();
+  const text = typed || fullText();
+  if (!text) { setStatus("Nothing to send yet — speak or type first."); return; }
+
+  // Single-turn: stop listening while the assistant thinks and speaks.
+  if (recording) stopListening();
+
+  busy = true; $("send").disabled = true;
+  addBubble("You", text);
+  finalizedText = ""; partialText = ""; $("textInput").value = ""; renderLive();
+  setStatus("Thinking…", "busy");
+
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const data = await res.json();
+    const reply = data.reply || "(no reply)";
+    addBubble("Assistant", reply);
+    setStatus("Speaking…", "busy");
+    await speak(reply);
+    setStatus("Ready — click the mic to ask another question.", "ok");
+  } catch (e) {
+    addBubble("Assistant", "⚠ " + e.message);
+    setStatus("Error: " + e.message);
+  } finally {
+    busy = false; $("send").disabled = false;
+    renderLive();
+  }
+}
+
+async function speak(text) {
+  const res = await fetch("/api/tts", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const player = $("player");
+  player.src = URL.createObjectURL(blob);
+  await player.play().catch(() => {});
+  await new Promise((r) => { player.onended = r; setTimeout(r, 30000); });
+}
+
+$("send").addEventListener("click", submit);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+});
+</script>
+</body>
+</html>

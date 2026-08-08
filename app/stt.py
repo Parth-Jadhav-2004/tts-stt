@@ -70,6 +70,24 @@ def _to_wav_16k_mono(audio_bytes: bytes) -> bytes:
     return proc.stdout
 
 
+class StreamRecognizer:
+    """Incremental recognizer for realtime 16 kHz mono PCM (int16) chunks."""
+
+    def __init__(self) -> None:
+        self._rec = KaldiRecognizer(load(), SAMPLE_RATE)
+        self._rec.SetWords(True)
+
+    def accept(self, pcm_bytes: bytes) -> dict:
+        """Feed a chunk. Returns {"final": text} when an utterance ends,
+        otherwise {"partial": text} with the in-progress hypothesis."""
+        if self._rec.AcceptWaveform(pcm_bytes):
+            return {"final": json.loads(self._rec.Result()).get("text", "")}
+        return {"partial": json.loads(self._rec.PartialResult()).get("partial", "")}
+
+    def final(self) -> str:
+        return json.loads(self._rec.FinalResult()).get("text", "")
+
+
 def transcribe(audio_bytes: bytes) -> str:
     """Transcribe audio bytes (any ffmpeg-decodable format) to text."""
     model = load()
