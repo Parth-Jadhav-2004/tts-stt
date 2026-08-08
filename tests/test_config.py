@@ -6,7 +6,7 @@ import pytest
 from voice_chat.config import Config, ROOT
 
 
-def test_config_loads_from_env(tmp_path, monkeypatch):
+def test_config_loads_from_env(tmp_path):
     env = tmp_path / ".env"
     env.write_text(
         "\n".join(
