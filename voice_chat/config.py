@@ -35,8 +35,7 @@ class Config:
 
     @classmethod
     def load(cls, env_file: str | Path | None = None) -> "Config":
-        load_dotenv(env_file or ROOT / ".env")
-
+        load_dotenv(env_file or ROOT / ".env", override=env_file is not None)
         def path_from_env(key: str, default: str) -> Path:
             raw = os.getenv(key, default)
             path = Path(raw).expanduser()
