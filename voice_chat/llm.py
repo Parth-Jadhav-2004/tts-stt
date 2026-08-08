@@ -55,3 +55,6 @@ class LLMClient:
                 yield delta
         reply = "".join(chunks).strip()
         self._history.append({"role": "assistant", "content": reply})
+        # Keep context bounded for a long voice session
+        if len(self._history) > 21:  # system + 10 turns
+            self._history = [self._history[0]] + self._history[-20:]
