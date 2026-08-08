@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>tts-stt · Speech Studio</title>
+<style>
+  :root {
+    --bg: #0f172a; --panel: #1e293b; --panel-2: #273449;
+    --accent: #6366f1; --accent-2: #22d3ee; --text: #e2e8f0; --muted: #94a3b8;
+    --ok: #34d399; --border: #334155;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: radial-gradient(1200px 600px at 10% -10%, #1e293b, var(--bg));
+    color: var(--text); min-height: 100vh; padding: 32px 16px;
+  }
+  header { max-width: 960px; margin: 0 auto 28px; }
+  h1 { margin: 0; font-size: 28px; letter-spacing: -0.5px; }
+  h1 span { background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .sub { color: var(--muted); margin-top: 6px; font-size: 14px; }
+  .grid { max-width: 960px; margin: 0 auto; display: grid; gap: 20px;
+    grid-template-columns: 1fr 1fr; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 16px; padding: 22px; }
+  .card h2 { margin: 0 0 4px; font-size: 18px; }
+  .card p.hint { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+  textarea, input[type=file] { width: 100%; }
+  textarea {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 10px; padding: 12px; font-size: 14px; resize: vertical; min-height: 110px;
+  }
+  button {
+    cursor: pointer; border: none; border-radius: 10px; padding: 11px 16px;
+    font-size: 14px; font-weight: 600; color: white;
+    background: linear-gradient(90deg, var(--accent), #818cf8); transition: transform .05s;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:active { transform: translateY(1px); }
+  button.secondary { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+  audio { width: 100%; margin-top: 14px; }
+  .result {
+    margin-top: 16px; background: var(--panel-2); border: 1px dashed var(--border);
+    border-radius: 10px; padding: 14px; min-height: 46px; font-size: 15px; white-space: pre-wrap;
+  }
+  .result:empty::before { content: "Transcript will appear here…"; color: var(--muted); }
+  .status { font-size: 13px; color: var(--muted); margin-top: 10px; min-height: 18px; }
+  .status.ok { color: var(--ok); }
+  .file-label {
+    display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; font-size: 14px; cursor: pointer;
+  }
+  input[type=file] { display: none; }
+  footer { max-width: 960px; margin: 26px auto 0; color: var(--muted); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+  <header>
+    <h1><span>Speech Studio</span> · tts-stt</h1>
+    <div class="sub">Offline Text-to-Speech (Piper) &amp; Speech-to-Text (Vosk) — running locally.</div>
+  </header>
+
+  <div class="grid">
+    <!-- TTS -->
+    <div class="card">
+      <h2>Text → Speech</h2>
+      <p class="hint">Type something and synthesize spoken audio.</p>
+      <textarea id="tts-text">Hello world, this is a text to speech and speech to text demo.</textarea>
+      <div class="row">
+        <button id="tts-btn">Synthesize</button>
+        <a id="tts-download" class="file-label" style="display:none">Download WAV</a>
+      </div>
+      <audio id="tts-audio" controls style="display:none"></audio>
+      <div class="status" id="tts-status"></div>
+    </div>
+
+    <!-- STT -->
+    <div class="card">
+      <h2>Speech → Text</h2>
+      <p class="hint">Upload an audio file, record from your mic, or transcribe the audio you just synthesized.</p>
+      <div class="row">
+        <label class="file-label" for="stt-file">Choose audio file…</label>
+        <input type="file" id="stt-file" accept="audio/*" />
+        <button id="rec-btn" class="secondary">● Record</button>
+        <button id="roundtrip-btn" class="secondary" disabled>Transcribe synthesized</button>
+      </div>
+      <div class="row">
+        <button id="stt-btn" disabled>Transcribe</button>
+      </div>
+      <div class="result" id="stt-result"></div>
+      <div class="status" id="stt-status"></div>
+    </div>
+  </div>
+
+  <footer>FastAPI · Piper · Vosk — <a href="/api/health" style="color:var(--accent-2)">/api/health</a></footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let lastSynthBlob = null;   // WAV from TTS, for round-trip
+let pendingSttBlob = null;  // file/recording chosen for STT
+let mediaRecorder = null, chunks = [];
+
+// ---- TTS ----
+$("tts-btn").addEventListener("click", async () => {
+  const text = $("tts-text").value.trim();
+  if (!text) { setStatus("tts", "Enter some text first.", false); return; }
+  $("tts-btn").disabled = true;
+  setStatus("tts", "Synthesizing…", false);
+  try {
+    const res = await fetch("/api/tts", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const blob = await res.blob();
+    lastSynthBlob = blob;
+    const url = URL.createObjectURL(blob);
+    const audio = $("tts-audio");
+    audio.src = url; audio.style.display = "block";
+    const dl = $("tts-download");
+    dl.href = url; dl.download = "speech.wav"; dl.style.display = "inline-block";
+    $("roundtrip-btn").disabled = false;
+    setStatus("tts", "Done — audio ready.", true);
+  } catch (e) {
+    setStatus("tts", "Error: " + e.message, false);
+  } finally { $("tts-btn").disabled = false; }
+});
+
+// ---- STT: file selection ----
+$("stt-file").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  if (f) { pendingSttBlob = f; $("stt-btn").disabled = false;
+    setStatus("stt", "Selected: " + f.name, false); }
+});
+
+// ---- STT: round-trip ----
+$("roundtrip-btn").addEventListener("click", () => {
+  if (!lastSynthBlob) return;
+  pendingSttBlob = new File([lastSynthBlob], "synth.wav", { type: "audio/wav" });
+  $("stt-btn").disabled = false;
+  setStatus("stt", "Loaded synthesized audio — click Transcribe.", false);
+});
+
+// ---- STT: mic recording ----
+$("rec-btn").addEventListener("click", async () => {
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    mediaRecorder.stop(); return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream); chunks = [];
+    mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+    mediaRecorder.onstop = () => {
+      pendingSttBlob = new Blob(chunks, { type: "audio/webm" });
+      $("stt-btn").disabled = false;
+      $("rec-btn").textContent = "● Record";
+      setStatus("stt", "Recording captured — click Transcribe.", false);
+      stream.getTracks().forEach((t) => t.stop());
+    };
+    mediaRecorder.start();
+    $("rec-btn").textContent = "■ Stop";
+    setStatus("stt", "Recording… click Stop when done.", false);
+  } catch (e) { setStatus("stt", "Mic error: " + e.message, false); }
+});
+
+// ---- STT: transcribe ----
+$("stt-btn").addEventListener("click", async () => {
+  if (!pendingSttBlob) return;
+  $("stt-btn").disabled = true;
+  setStatus("stt", "Transcribing…", false);
+  $("stt-result").textContent = "";
+  try {
+    const fd = new FormData();
+    fd.append("audio", pendingSttBlob, pendingSttBlob.name || "audio");
+    const res = await fetch("/api/stt", { method: "POST", body: fd });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const data = await res.json();
+    $("stt-result").textContent = data.text || "(no speech detected)";
+    setStatus("stt", "Done.", true);
+  } catch (e) {
+    setStatus("stt", "Error: " + e.message, false);
+  } finally { $("stt-btn").disabled = false; }
+});
+
+function setStatus(which, msg, ok) {
+  const el = $(which + "-status");
+  el.textContent = msg;
+  el.className = "status" + (ok ? " ok" : "");
+}
+</script>
+</body>
+</html>

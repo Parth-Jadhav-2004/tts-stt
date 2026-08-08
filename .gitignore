@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Downloaded ML models (fetched lazily at runtime)
+models/
+
+# Local artifacts
+*.wav
+.env
