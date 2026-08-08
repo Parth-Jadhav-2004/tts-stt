@@ -200,7 +200,7 @@ async function submit() {
   const text = typed || fullText();
   if (!text) { setStatus("Nothing to send yet — speak or type first."); return; }
 
-  const wasRecording = recording;
+  // Single-turn: stop listening while the assistant thinks and speaks.
   if (recording) stopListening();
 
   busy = true; $("send").disabled = true;
@@ -219,13 +219,13 @@ async function submit() {
     addBubble("Assistant", reply);
     setStatus("Speaking…", "busy");
     await speak(reply);
-    setStatus("Ready.", "ok");
+    setStatus("Ready — click the mic to ask another question.", "ok");
   } catch (e) {
     addBubble("Assistant", "⚠ " + e.message);
     setStatus("Error: " + e.message);
   } finally {
     busy = false; $("send").disabled = false;
-    if (wasRecording) startListening();
+    renderLive();
   }
 }
 
